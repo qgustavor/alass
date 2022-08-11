@@ -123,6 +123,7 @@ struct Arguments {
     reference_file_path: PathBuf,
     incorrect_file_path: PathBuf,
     output_file_path: PathBuf,
+    source_file_path: Option<PathBuf>,
 
     interval: i64,
 
@@ -157,6 +158,9 @@ fn parse_args() -> Result<Arguments, InputArgumentsError> {
         .arg(Arg::with_name("output-file-path")
             .help("Path to corrected subtitle file")
             .required(true))
+        .arg(Arg::with_name("source-sub-file")
+            .help("Path to source subtitle file to apply timings to")
+            .required(false))
         .arg(Arg::with_name("split-penalty")
             .short("p")
             .long("split-penalty")
@@ -267,6 +271,11 @@ fn parse_args() -> Result<Arguments, InputArgumentsError> {
         reference_file_path,
         incorrect_file_path,
         output_file_path,
+        source_file_path: if matches.is_present("source-sub-file") {
+            Some(matches.value_of("source-sub-file").unwrap().into())
+        } else {
+            None
+        },
         interval,
         split_penalty,
         sub_fps_ref: unpack_clap_number_f64(&matches, "sub-fps-ref")?,
@@ -466,6 +475,17 @@ fn run() -> Result<(), failure::Error> {
         println!();
     }
 
+    let src_file = if args.source_file_path.is_some() {
+        SubtitleFileHandler::open_sub_file(args.source_file_path.as_ref().unwrap().as_path(), args.encoding_inc, args.sub_fps_inc)?
+    } else {
+        inc_file
+    };
+
+    if src_file.timespans().is_empty() {
+        println!("warn: file with source subtitles has no lines");
+        println!();
+    }
+
     fn scaled_timespan(ts: TimeSpan, fps_scaling_factor: f64) -> TimeSpan {
         TimeSpan::new(
             TimePoint::from_msecs((ts.start.msecs() as f64 * fps_scaling_factor) as i64),
@@ -473,7 +493,7 @@ fn run() -> Result<(), failure::Error> {
         )
     }
 
-    let mut corrected_timespans: Vec<subparse::timetypes::TimeSpan> = inc_file
+    let mut corrected_timespans: Vec<subparse::timetypes::TimeSpan> = src_file
         .timespans()
         .iter()
         .zip(deltas.iter())
@@ -515,7 +535,7 @@ fn run() -> Result<(), failure::Error> {
         .collect();
 
     // write corrected files
-    let mut correct_file = inc_file.into_subtitle_file();
+    let mut correct_file = src_file.into_subtitle_file();
     correct_file
         .update_subtitle_entries(&shifted_timespans)
         .with_context(|_| TopLevelErrorKind::FailedToUpdateSubtitle)?;
